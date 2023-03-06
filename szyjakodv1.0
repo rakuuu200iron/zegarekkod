@@ -1,0 +1,185 @@
+#include <ArduinoBLE.h>
+
+#define BatteryLevel 2 // Pin D2
+#define PulseDiode 3 // Pin D3
+#define CurrentLevel1 4 // Pin D4
+#define CurrentLevel2 5 // Pin D5
+#define TestButton 6 // Pin D6
+#define Engine1 7 // Pin D7
+#define Engine2 8 // Pin D8
+#define ChargeSignal A2 // Pin A2
+
+int OdczytanaWartosc = 0;
+double VoltageBattery = 0;
+int i = 0;
+
+void setup() 
+{
+  pinMode(BatteryLevel, OUTPUT);
+  pinMode(PulseDiode, OUTPUT);
+  pinMode(CurrentLevel1, OUTPUT);
+  pinMode(CurrentLevel2, OUTPUT);
+  pinMode(TestButton, INPUT_PULLUP);
+  pinMode(Engine1, OUTPUT);
+  pinMode(Engine2, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  Serial.begin(9600);
+  BLE.begin(); //inicjalizacja sprzętu BLE
+  Serial.println("BLE Central - LED control");
+  BLE.scanForUuid("19b10000-e8f2-537e-4f6c-d104768a1214"); // początek skanowania za urzadzeniem peryferyjnym
+
+}
+
+void loop() 
+{
+  OdczytanaWartosc = analogRead(ChargeSignal);//Odczytujemy wartość napięcia
+  VoltageBattery = (5.0/4096.0) * OdczytanaWartosc; // Zamieniamy wartość na napięcie
+  VoltageBattery *= 7.85; // odczytanie prawidłowego napiecia baterii
+  if(VoltageBattery <= 7.1) // zaświecenie diody w przypadku rozładowania baterii
+  {
+    digitalWrite(BatteryLevel, HIGH);
+  } else
+  {
+    digitalWrite(BatteryLevel, LOW);
+  }
+
+  BLEDevice peripheral = BLE.available(); // sprawdź jesli urządzenie peryferyjne jest dostepne
+  if (peripheral) // Jeśli urządzenie peryferyjne jest dostępne, napisz adress, nazwe lokalną oraz serwis dostepu
+  {
+    Serial.print("Found ");
+    Serial.print(peripheral.address());
+    Serial.print(" '");
+    Serial.print(peripheral.localName());
+    Serial.print("' ");
+    Serial.print(peripheral.advertisedServiceUuid());
+    Serial.println();
+    if (peripheral.localName().indexOf("Button Device") < 0) {
+      Serial.println("No 'Button Device' in name");
+      return;
+    }
+    BLE.stopScan(); // stop skanowania
+    controlLed(peripheral);
+    BLE.scanForUuid("19b10000-e8f2-537e-4f6c-d104768a1214"); // urządzenie peryferyjne rozłaczone, zacznij szukać ponownie
+  } else
+  {
+    OdczytanaWartosc = analogRead(ChargeSignal);//Odczytujemy wartość napięcia
+    VoltageBattery = (5.0/4096.0) * OdczytanaWartosc; // Zamieniamy wartość na napięcie
+    VoltageBattery *= 7.85; // odczytanie prawidłowego napiecia baterii
+    if(VoltageBattery <= 7.1) // zaświecenie diody w przypadku rozładowania baterii
+    {
+      digitalWrite(BatteryLevel, HIGH);
+    } else
+    {
+      digitalWrite(BatteryLevel, LOW);
+    }
+  }
+
+  int buttonState = digitalRead(TestButton);
+  if(buttonState == LOW)
+  {
+    digitalWrite(PulseDiode, LOW);
+    analogWrite(Engine1, 51);
+    analogWrite(Engine2, 51);
+    digitalWrite(CurrentLevel1, HIGH);
+    delay(6000);
+    analogWrite(Engine1, 255);
+    analogWrite(Engine2, 255);
+    digitalWrite(CurrentLevel2, HIGH);
+    delay(6000);
+  } else
+  {
+    digitalWrite(PulseDiode, HIGH);
+    analogWrite(Engine1, 0);
+    analogWrite(Engine2, 0);
+    digitalWrite(CurrentLevel1, LOW);
+    digitalWrite(CurrentLevel2, LOW);
+  }
+
+}
+
+void controlLed(BLEDevice peripheral) {
+  Serial.println("Connecting ..."); // połączenie z urządzeniem peryferyjnym
+  if (peripheral.connect()) 
+  {
+    Serial.println("Connected");
+  } else {
+    Serial.println("Failed to connect!");
+    return;
+  }
+  Serial.println("Discovering attributes ..."); // odkrycie atrybutu urządzenia peryferyjnego
+  if (peripheral.discoverAttributes()) {
+    Serial.println("Attributes discovered");
+  } else {
+    Serial.println("Attribute discovery failed!");
+    peripheral.disconnect();
+    return;
+  }
+  BLECharacteristic PulseCharacteristic = peripheral.characteristic("19b10001-e8f2-537e-4f6c-d104768a1214"); //otrzymanie PULSE characteristic
+  if (!PulseCharacteristic) 
+  {
+    Serial.println("Peripheral does not have LED characteristic!");
+    peripheral.disconnect();
+    return;
+  }
+  while (peripheral.connected()) 
+  {
+
+    OdczytanaWartosc = analogRead(ChargeSignal);//Odczytujemy wartość napięcia
+    VoltageBattery = (5.0/4096.0) * OdczytanaWartosc; // Zamieniamy wartość na napięcie
+    VoltageBattery *= 7.85; // odczytanie prawidłowego napiecia baterii
+    if(VoltageBattery <= 7.1) // zaświecenie diody w przypadku rozładowania baterii
+    {
+      digitalWrite(BatteryLevel, HIGH);
+    } else
+    {
+      digitalWrite(BatteryLevel, LOW);
+    }
+    if (PulseCharacteristic.canRead()) //gdy urządzenie peryferyjne jest podłączone
+    {
+      byte value = PulseCharacteristic.read();
+      PulseCharacteristic.readValue(value);
+      i++;
+      if (value > 0x00) 
+      {
+        Serial.println("ON");
+        Serial.println(value);
+        digitalWrite(LED_BUILTIN, HIGH);
+
+        if(value < 60 || value > 90)
+        {
+          digitalWrite(PulseDiode, LOW);
+          analogWrite(Engine1, 51);
+          analogWrite(Engine2, 51);
+          digitalWrite(CurrentLevel1, HIGH);
+          delay(3000);
+          if(i = 2 && (value < 60 || value > 90))
+          {
+            analogWrite(Engine1, 255);
+            analogWrite(Engine2, 255);
+            digitalWrite(CurrentLevel2, HIGH);
+            delay(6000);
+            i = 0;
+          }
+        } else
+        {
+          digitalWrite(PulseDiode, HIGH);
+          analogWrite(Engine1, 0);
+          analogWrite(Engine2, 0);
+        }
+      }
+      else if (value == 0x00) 
+      {
+        digitalWrite(LED_BUILTIN, LOW);
+        Serial.println("OFF");
+        Serial.println(value);
+        digitalWrite(PulseDiode, HIGH);
+        analogWrite(Engine1, 0);
+        analogWrite(Engine2, 0);
+        digitalWrite(CurrentLevel1, LOW);
+        digitalWrite(CurrentLevel2, LOW);
+      }
+    }
+    delay(500);
+  }
+  Serial.println("Peripheral disconnected");
+}
