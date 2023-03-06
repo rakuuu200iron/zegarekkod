@@ -1,0 +1,115 @@
+#include <ArduinoBLE.h>
+#include "DFRobot_Heartrate.h"
+
+#define Button 2 // Pin D2
+#define PulseDiode 3 // Pin D3
+#define BatteryLevel 4 // Pin D4
+#define ChargeSignal A2 // Pin A2
+#define PulseSignal A1 // Pin A1
+
+DFRobot_Heartrate heartrate(DIGITAL_MODE);
+
+int OdczytanaWartosc = 0;
+double VoltageBattery = 0;
+boolean ledSwitch;
+
+BLEService PulseService("19B10000-E8F2-537E-4F6C-D104768A1214"); // BLE PULSE Service
+// BLE PULSE Switch Characteristic - custom 128-bit UUID, read and writable by central
+BLEByteCharacteristic PulseCharacteristic("19B10001-E8F2-537E-4F6C-D104768A1214", BLERead | BLENotify | BLEWrite);
+
+void setup() 
+{
+  pinMode(Button, INPUT_PULLUP);
+  pinMode(PulseDiode, OUTPUT);
+  pinMode(BatteryLevel, OUTPUT);
+  Serial.begin(9600);
+  if (!BLE.begin()) //początek komunikacji Bluetooth
+  {
+    Serial.println("starting Bluetooth® Low Energy failed!");
+  }
+  BLE.setLocalName("Button Device"); // ustawienie nazwy
+  BLE.setAdvertisedService(PulseService); // ustawienie UUID
+  PulseService.addCharacteristic(PulseCharacteristic); // dodanie cechy do usługi
+  BLE.addService(PulseService); // dodanie usługi
+  BLE.advertise(); // pojawienie sie na liście urzadzeń
+  Serial.println("BLE LED Peripheral, waiting for connections....");
+}
+
+void loop() 
+{
+
+  BLEDevice central = BLE.central(); // nasłuchiwanie, czy urządzenia peryferyjne BLE mogą się połączyć
+
+  if (central) // jeśli urządzenie centralne jest podłączona do peryferii
+  {
+    Serial.print("Connected to central: ");
+    Serial.println(central.address()); // napisz adres MAC centrali
+
+    while (central.connected()) // gdy urządzenie centralne jest jeszcze podłączone do peryferii
+    {
+
+      int buttonState = digitalRead(Button);
+
+      OdczytanaWartosc = analogRead(ChargeSignal);//Odczytujemy wartość napięcia
+      VoltageBattery = (5.0/4096.0) * OdczytanaWartosc; // Zamieniamy wartość na napięcie
+      VoltageBattery *= 7.85; // odczytanie prawidłowego napiecia baterii
+      if(VoltageBattery <= 7.1) // zaświecenie diody w przypadku rozładowania baterii
+      {
+        digitalWrite(BatteryLevel, HIGH);
+      } else
+      {
+        digitalWrite(BatteryLevel, LOW);
+      }
+
+      uint8_t rateValue;
+      heartrate.getValue(PulseSignal); // Odczytanie wartości z pinu A1
+      delay(20);
+      rateValue = heartrate.getRate(); // Otrzymanie wartosci tętna
+      delay(20);
+      if( rateValue)
+      {
+        Serial.println(rateValue); //wypiszanie tętna na komputerze
+        delay(20);
+      }
+      if(rateValue)  
+      {
+        digitalWrite(PulseDiode, HIGH); // dioda świeci gdy pomiar sie udał
+        delay(500);
+        if (buttonState == LOW) 
+        {
+          ledSwitch = !ledSwitch;
+      
+          delay(500);
+
+          if (ledSwitch) {
+            Serial.println("ON");
+            PulseCharacteristic.writeValue((byte)rateValue); //wysłanie tętna
+          }
+          else {
+            PulseCharacteristic.writeValue((byte)0x00);
+            Serial.println("OFF");
+          }
+        }
+      } else
+      {
+        digitalWrite(PulseDiode, LOW);
+      }
+
+    }
+
+    Serial.print(F("Disconnected from central: ")); // gdy urządzenie centralne się rozłączy, napisz to
+    Serial.println(central.address());
+  } else 
+  {
+    OdczytanaWartosc = analogRead(ChargeSignal);//Odczytujemy wartość napięcia
+    VoltageBattery = (5.0/4096.0) * OdczytanaWartosc; // Zamieniamy wartość na napięcie
+    VoltageBattery *= 7.85; // odczytanie prawidłowego napiecia baterii
+    if(VoltageBattery <= 7.1) // zaświecenie diody w przypadku rozładowania baterii
+    {
+      digitalWrite(BatteryLevel, HIGH);
+    } else
+    {
+      digitalWrite(BatteryLevel, LOW);
+    }
+  }
+}
